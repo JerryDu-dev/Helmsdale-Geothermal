@@ -1,127 +1,143 @@
-%% === Helmsdale Sensitivity Study ===
+%% === Helmsdale Systematic Parameter Sweep (Revised & Calibrated) ===
+% This script evaluates the sensitivity of the 100C isotherm depth 
+% to Fault Permeability (KD) and Granite Radiogenic Heat (Qr).
+% Optimized for the 22 K/km Basal Gradient scenario.
+
 clear; clc; close all;
 
-% 1. Shared Configuration
+% 1. Shared Numerical Configuration
 Lx = 14000; Ly = 6000; Nx = 141; Ny = 61;
 x = linspace(0, Lx, Nx); y = linspace(0, Ly, Ny);
-[X, Y] = meshgrid(x, y);
-dx = x(2)-x(1); dy = y(2)-y(1);
-years = 150000; sec_per_year = 365.25 * 24 * 3600; dt_mult = 0.1;
+[X, Y] = meshgrid(x, y); dx = x(2)-x(1); dy = y(2)-y(1);
 
-% Define 4 Scenarios: [Qr_granite, KD_fault, Scenario_Name]
-scenarios = {
-    6.53e-6, 2.5e-7, 'Baseline';
-    4.00e-6, 2.5e-7, 'Low Radiogenic Heat (Qr)';
-    6.53e-6, 1.0e-8, 'Low Fault Permeability (KD)';
-    6.53e-6, 1.0e-6, 'High Fault Permeability (KD)'
-};
+% %% === CRITICAL CHANGE 1: Increase simulation time for steady state ===
+years = 150000; % Increased to 300 kyr to ensure full thermal equilibrium
+sec_per_year = 365.25 * 24 * 3600;
+dt_mult = 0.1;
 
-% Storage for results
-T_results = cell(4, 1);
-Depth_100C_Fault = zeros(4, 1);
-idx_fault = round(5100 / dx); % Fault location index
+% --- Define Parameter Space ---
+KD_vec = logspace(-9, -6, 7); 
+depth_KD_fault = zeros(size(KD_vec));
 
-fprintf('Starting Sensitivity Study (4 Scenarios)...\n');
+Qr_vec = linspace(3e-6, 9e-6, 7);
+depth_Qr_granite = zeros(size(Qr_vec));
 
-for s = 1:4
-    fprintf('Running Scenario %d: %s...\n', s, scenarios{s, 3});
-    
-    % --- Base Matrices ---
+KD_base = 2.5e-7;
+Qr_base = 6.53e-6;
+
+fprintf('Starting Systematic Parameter Sweep (22 K/km Baseline)...\n');
+
+%% --- SWEEP 1: Fault Permeability (KD) Variation ---
+fprintf('\n--- Sweep 1: KD Variation (Measuring at Fault x=5.1km) ---\n');
+for i = 1:length(KD_vec)
+    fprintf('Running KD = %.1e... ', KD_vec(i));
+    [d_fault, ~] = run_model(X, Y, dx, dy, Ny, Nx, years, sec_per_year, dt_mult, y, Qr_base, KD_vec(i));
+    depth_KD_fault(i) = d_fault;
+    fprintf('Depth: %.2f km\n', depth_KD_fault(i));
+end
+
+%% --- SWEEP 2: Radiogenic Heat (Qr) Variation ---
+fprintf('\n--- Sweep 2: Qr Variation (Measuring in Granite x=2.0km) ---\n');
+for i = 1:length(Qr_vec)
+    fprintf('Running Qr = %.2e... ', Qr_vec(i));
+    [~, d_granite] = run_model(X, Y, dx, dy, Ny, Nx, years, sec_per_year, dt_mult, y, Qr_vec(i), KD_base);
+    depth_Qr_granite(i) = d_granite;
+    fprintf('Depth: %.2f km\n', depth_Qr_granite(i));
+end
+
+%% === Visualization: Professional Sensitivity Curves ===
+figure('Position', [100, 100, 1000, 450], 'Color', 'w');
+
+subplot(1, 2, 1);
+semilogx(KD_vec, depth_KD_fault, '-ko', 'LineWidth', 2, 'MarkerFaceColor', 'b', 'MarkerSize', 8);
+set(gca, 'YDir', 'reverse'); 
+grid on;
+xlabel('Fault Permeability Factor K_D (m^2/Pa\cdot s)', 'FontSize', 12, 'FontWeight', 'bold');
+ylabel('100\circC Depth at Fault (km)', 'FontSize', 12, 'FontWeight', 'bold');
+title('A. Sensitivity to Fault Permeability', 'FontSize', 14);
+ylim([1, 4.5]); % Consistent Y-axis
+
+subplot(1, 2, 2);
+plot(Qr_vec*1e6, depth_Qr_granite, '-ko', 'LineWidth', 2, 'MarkerFaceColor', 'r', 'MarkerSize', 8);
+set(gca, 'YDir', 'reverse'); 
+grid on;
+xlabel('Granite Radiogenic Heat Q_r (\muW/m^3)', 'FontSize', 12, 'FontWeight', 'bold');
+ylabel('100\circC Depth in Granite (km)', 'FontSize', 12, 'FontWeight', 'bold');
+title('B. Sensitivity to Radiogenic Heat', 'FontSize', 14);
+ylim([1, 4.5]); 
+
+%% === Internal Function: Core FDM Solver ===
+function [depth_fault, depth_granite] = run_model(X, Y, dx, dy, Ny, Nx, years, sec_per_year, dt_mult, y_vec, Qr_val, KD_val)
+    % Property Matrices initialization (Basement defaults)
     K_mat = ones(Ny, Nx)*2.5; Rho_mat = ones(Ny, Nx)*2700;
     Cp_mat = ones(Ny, Nx)*900; Qr_mat = ones(Ny, Nx)*1.0e-6; 
     KD_mat = ones(Ny, Nx)*1.0e-11; Type_mat = zeros(Ny, Nx);
     
-    % --- Apply Geometry & Scenario Parameters ---
-    % Granite
+    % 1. Granite
     mask_granite = (X < 5000); 
     K_mat(mask_granite) = 2.67; Rho_mat(mask_granite) = 2630; Cp_mat(mask_granite) = 836;
-    Qr_mat(mask_granite) = scenarios{s, 1}; % <--- INJECT Qr
-    Type_mat(mask_granite) = 1;
+    Qr_mat(mask_granite) = Qr_val; Type_mat(mask_granite) = 1;
     
-    % Fault
-    fault_center_x = 5000 + Y / tand(60); mask_fault = abs(X - fault_center_x) < 250;
+    % 2. Fault
+    fault_center_x = 5000 + Y / tand(60); 
+    mask_fault = abs(X - fault_center_x) < 250;
     K_mat(mask_fault) = 2.70; Rho_mat(mask_fault) = 2299; Cp_mat(mask_fault) = 1031;
-    KD_mat(mask_fault) = scenarios{s, 2};   % <--- INJECT KD
-    Type_mat(mask_fault) = 3;
+    KD_mat(mask_fault) = KD_val; Type_mat(mask_fault) = 3;   
     
-    % Basin
+    % 3. Basin
     mask_basin = (X > fault_center_x + 250) & (Y < 2500);
     K_mat(mask_basin) = 1.78; Rho_mat(mask_basin) = 2073; Cp_mat(mask_basin) = 1361;
     Qr_mat(mask_basin) = 0.5e-6; Type_mat(mask_basin) = 2;
     
-    % --- Fluid Flow ---
-    Vy = -2.0e-2 * KD_mat; Vy(Type_mat ~= 3) = 0;
+    % Flow Proxy
+    Vy = -2.0e-2 * KD_mat; 
+    Vy(Type_mat ~= 3) = 0; 
     Vy = smoothdata(Vy, 1, 'gaussian', 5);
     
-    % --- Solver Init ---
+    % Solver Init
     D_mat = K_mat ./ (Rho_mat .* Cp_mat);
     dt_diff = dt_mult * min(dx^2, dy^2) / max(D_mat(:));
     max_v = max(abs(Vy(:)));
     if max_v > 0, dt = min(dt_diff, dt_mult * dy / max_v); else, dt = dt_diff; end
     nt = ceil(years * sec_per_year / dt);
     
-    T = 10 + 0.030 * Y; T_new = T;
+    % %% === CRITICAL CHANGE 2: Align Initial Condition ===
+    T_surf = 10;
+    DT_dy_init = 0.022; % Changed from 0.030 to 0.022
+    T = T_surf + DT_dy_init * Y; 
+    T_new = T;
+    
     Const_Adv = (1000 * 4200) ./ (Rho_mat .* Cp_mat);
     
-    % --- Main Loop ---
     for n = 1:nt
-        k_right = 0.5*(K_mat + circshift(K_mat, [0,-1])); k_left = 0.5*(K_mat + circshift(K_mat, [0, 1]));
+        k_right = 0.5*(K_mat + circshift(K_mat, [0,-1])); 
+        k_left  = 0.5*(K_mat + circshift(K_mat, [0, 1]));
         dT2_dx2 = (k_right.*(circshift(T,[0,-1])-T) - k_left.*(T-circshift(T,[0,1]))) / dx^2;
-        k_down = 0.5*(K_mat + circshift(K_mat, [-1,0])); k_up = 0.5*(K_mat + circshift(K_mat, [1, 0]));
+        k_down  = 0.5*(K_mat + circshift(K_mat, [-1,0])); 
+        k_up    = 0.5*(K_mat + circshift(K_mat, [1, 0]));
         dT2_dy2 = (k_down.*(circshift(T,[-1,0])-T) - k_up.*(T-circshift(T,[1,0]))) / dy^2;
         Diff_Term = (1./(Rho_mat.*Cp_mat)) .* (dT2_dx2 + dT2_dy2);
         
-        dT_dy_up = zeros(size(T)); dT_dy_up(Vy < 0) = (circshift(T(Vy < 0), [-1, 0]) - T(Vy < 0)) / dy; 
+        dT_dy_up = zeros(size(T));
+        T_shift = circshift(T, [-1, 0]); 
+        mask_up = Vy < 0; 
+        dT_dy_up(mask_up) = (T_shift(mask_up) - T(mask_up)) / dy; 
         Adv_Term = Const_Adv .* (Vy .* dT_dy_up);
-        Source_Term = Qr_mat ./ (Rho_mat .* Cp_mat);
         
+        Source_Term = Qr_mat ./ (Rho_mat .* Cp_mat);
         T_new = T + dt * (Diff_Term - Adv_Term + Source_Term);
-        T_new(1, :) = 10; T_new(end, :) = T_new(end-1, :) + 0.035 * dy; 
-        T_new(:, 1) = T_new(:, 2); T_new(:, end) = T_new(:, end-1);    
+        
+        T_new(1, :) = T_surf; 
+        % %% === CRITICAL CHANGE 3: Align Basal Boundary ===
+        T_new(end, :) = T_new(end-1, :) + 0.022 * dy; % Changed from 0.035 to 0.022
+        T_new(:, 1) = T_new(:, 2); T_new(:, end) = T_new(:, end-1);
         T = T_new;
     end
     
-    % Store Results
-    T_results{s} = T;
+    % Extract depths
+    idx_f = round(5100 / dx); prof_f = T(:, idx_f);
+    depth_fault = interp1(prof_f, y_vec, 100, 'linear') / 1000;
     
-    % Find depth of 100C at the fault
-    fault_temp_profile = T(:, idx_fault);
-    depth_idx = find(fault_temp_profile >= 100, 1, 'first');
-    if isempty(depth_idx)
-        Depth_100C_Fault(s) = NaN; % Did not reach 100C
-    else
-        Depth_100C_Fault(s) = y(depth_idx) / 1000; % Convert to km
-    end
-    fprintf('  -> 100C Depth at Fault: %.2f km\n', Depth_100C_Fault(s));
+    idx_g = round(2000 / dx); prof_g = T(:, idx_g);
+    depth_granite = interp1(prof_g, y_vec, 100, 'linear') / 1000;
 end
-
-%% === Visualization: Isotherm Shift Comparison ===
-figure('Position', [150, 150, 900, 600], 'Color', 'w'); hold on;
-% Background geological context (from Baseline)
-imagesc(x/1000, y/1000, Type_mat); colormap([0.9 0.9 0.9; 1 0.8 0.8; 0.8 0.9 1; 1 0.8 1]); caxis([0 3]);
-
-% Plot 100C Isotherms for all scenarios
-colors = {'k', 'b', 'r', 'g'};
-line_styles = {'-', '--', '-.', ':'};
-lines = zeros(4,1);
-
-for s = 1:4
-    [C, h] = contour(x/1000, y/1000, T_results{s}, [100 100], ...
-        'LineColor', colors{s}, 'LineStyle', line_styles{s}, 'LineWidth', 2.5);
-    lines(s) = h;
-end
-
-% Formatting
-axis ij; pbaspect([2.5 1 1]); 
-xlim([0 Lx/1000]); ylim([0 Ly/1000]);
-xlabel('Distance (km)', 'FontSize', 12); ylabel('Depth (km)', 'FontSize', 12);
-title('Sensitivity Study: Shift of the 100\circC Isotherm', 'FontSize', 14);
-
-% Custom Legend
-legend(lines, ...
-    sprintf('Baseline (100\\circC at %.2f km)', Depth_100C_Fault(1)), ...
-    sprintf('Low Q_r (100\\circC at %.2f km)', Depth_100C_Fault(2)), ...
-    sprintf('Low K_D (100\\circC at %.2f km)', Depth_100C_Fault(3)), ...
-    sprintf('High K_D (100\\circC at %.2f km)', Depth_100C_Fault(4)), ...
-    'Location', 'SouthEast', 'FontSize', 11);
-grid on;
