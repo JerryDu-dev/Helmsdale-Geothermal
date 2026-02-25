@@ -91,7 +91,7 @@ nt = ceil(years * sec_per_year / dt);
 
 % Initial Condition
 T_surf = 10;
-DT_dy_init = 0.030; 
+DT_dy_init = 0.022; 
 T = T_surf + DT_dy_init * Y;
 T_new = T;
 
@@ -129,7 +129,7 @@ for n = 1:nt
     
     % 5. Boundaries
     T_new(1, :) = T_surf;               
-    T_new(end, :) = T_new(end-1, :) + 0.035 * dy; 
+    T_new(end, :) = T_new(end-1, :) + 0.022 * dy; 
     T_new(:, 1) = T_new(:, 2);          
     T_new(:, end) = T_new(:, end-1);    
     T = T_new;
