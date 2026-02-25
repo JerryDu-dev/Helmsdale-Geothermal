@@ -116,7 +116,9 @@ for n = 1:nt
     
     % 2. Advection (Upwind)
     dT_dy_up = zeros(size(T));
-    dT_dy_up(Vy < 0) = (circshift(T(Vy < 0), [-1, 0]) - T(Vy < 0)) / dy; 
+    T_shift = circshift(T, [-1, 0]); 
+    mask = Vy < 0;                   
+    dT_dy_up(mask) = (T_shift(mask) - T(mask)) / dy; 
     Adv_Term = Const_Adv .* (Vy .* dT_dy_up);
     
     % 3. Source
